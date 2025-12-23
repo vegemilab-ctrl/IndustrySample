@@ -1,58 +1,75 @@
-using System.Collections.Generic;  //List, Dictionary같은 배열을 사용할 때 필요한 라이브러리
 using UnityEngine;
 using UnityEngine.Events;
 
-[RequireComponent(typeof(BoxCollider))]
 public class MagneticSensor : MonoBehaviour
 {
-    //센서 레이어 이름
-    public string layerName = "Sensor";
-    //센서의 감지 여부가 변경될 때마다 호출할 콜백함수가 들어있는 델리게이트
-    public UnityEvent<bool> onChangedDetected;
+    [Tooltip("감지에 사용할 콜라이더를 연결해 주세요. 연결하지 않을 시 \n게임오브젝트 안에 어태치되어 있는 콜라이더를 자동으로 가져옵니다.")]
+    public Collider sensor;
+    public LayerMask detectableLayer;       //감지 가능한 레이어
+    public string detectableName;             //감지 가능한 이름
 
-    //현재 감지 여부
-    private bool _hasDetectedPrev = false;
+    public string sensorAddress;               //PLC 입출력 주소
+
+    public UnityEvent<bool> onChangedDetect;
+
     private bool _hasDetected = false;
-    public List<Collider> _detectedList;
 
-    private void Start()
+    private void Awake()
     {
-        //활성화시 게임오브젝트의 레이어를 센서로 변경한다.
-        gameObject.layer = LayerMask.NameToLayer(layerName);
+        if (sensor == null)
+            sensor = GetComponent<Collider>();
+
+        if (sensor != null)
+            sensor.isTrigger = true;
+
+        if (string.IsNullOrEmpty(sensorAddress))
+        {
+            Debug.LogWarning($"{gameObject.name} PLC에 할당될 어드레스 값이 비어있습니다.");
+        }
+
+        HasDetected = false;
     }
 
-    //콜라이더에 다른 콜라이더가 들어왔을 경우 호출됨.(IsTrigger 체크 되어 있어야 만 함.)
+
+    //감지 결과에 대한 프로퍼티
+    public bool HasDetected
+    {
+        get => _hasDetected;
+        set
+        {
+            if (_hasDetected == value)
+                return;
+
+            _hasDetected = value;
+            onChangedDetect?.Invoke(value);
+        }
+    }
+
     private void OnTriggerEnter(Collider other)
     {
-        //Debug.Log($"Sensor Entered ->{other.gameObject.name}");
-        if (other.attachedRigidbody.isKinematic)
+        //감지 가능한 레이어들 중에서 트리거된 게임오브젝트의 레이어가 포함되는지 확인
+        if ((detectableLayer.value & 1 << other.gameObject.layer) == 0)
             return;
 
-        _detectedList.Add(other);
+        //감지 가능한 이름이 채워져 있을 경우, 트리거된 게임오브젝트의 이름과 비교해 같지 않으면 return
+        if (!string.IsNullOrEmpty(detectableName) && other.gameObject.name != detectableName)
+            return;
 
-        _hasDetected = _detectedList.Count > 0;
-        if (_hasDetectedPrev != _hasDetected)
-        {
-            //Debug.Log("Enter Callback");
-            onChangedDetected?.Invoke(_hasDetected);
-        }
-
-        _hasDetectedPrev = _hasDetected;
+        //레이어와 이름 모두 인정되어 감지대상이 들어왔음을 알림.
+        HasDetected = true;
     }
 
-    //콜라이더에 들어와 있던 다른 콜라이더가 나갔을 경우 호출됨.(IsTrigger 체크 되어 있어야 만 함.)
     private void OnTriggerExit(Collider other)
     {
-        //Debug.Log($"Sensor Exit -> {other.gameObject.name}");
-        _detectedList.Remove(other);
-        _hasDetected = _detectedList.Count > 0;
+        //감지 가능한 레이어들 중에서 트리거된 게임오브젝트의 레이어가 포함되는지 확인해 포함되지 않으면 return
+        if ((detectableLayer.value & 1 << other.gameObject.layer) == 0)
+            return;
 
-        if (_hasDetectedPrev != _hasDetected)
-        {
-            //Debug.Log("Exit Callback");
-            onChangedDetected?.Invoke(_hasDetected);
-        }
+        //감지 가능한 이름이 채워져 있을 경우, 트리거된 게임오브젝트의 이름과 비교해 같지 않으면 return
+        if (!string.IsNullOrEmpty(detectableName) && other.gameObject.name != detectableName)
+            return;
 
-        _hasDetectedPrev = _hasDetected;
+        //레이어와 이름 모두 인정되어 감지된 대상이 나갔음을 알림.
+        HasDetected = false;
     }
 }

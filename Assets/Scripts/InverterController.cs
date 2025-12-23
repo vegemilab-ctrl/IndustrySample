@@ -1,172 +1,311 @@
 using UnityEngine;
 using UnityEngine.Events;
 
-[RequireComponent(typeof(Rigidbody))]
 public class InverterController : MonoBehaviour
 {
-    public enum RotateAxis
-    {
-        None,
-        XAxis,
-        YAxis,
-        ZAxis,
-        Max
-    }
+    #region Variables
+    [Tooltip("\"모터 회전에 사용할 샤프트 리지드바디를 연결해 주세요. 연결하지 않을 시 \n게임오브젝트 안에 어태치되어 있는 리지드바디를 자동으로 가져옵니다.")]
+    public Rigidbody shaft;
+    [Tooltip("\"모터 회전에 사용할 샤프트 컨피규러블조인트를 연결해 주세요. 연결하지 않을 시 \n게임오브젝트 안에 어태치되어 있는 컨피규러블조인트를 자동으로 가져옵니다.")]
+    public ConfigurableJoint joint;
 
-    [Header("인버터 파라미터(Settings)")]
-    public RotateAxis axis = RotateAxis.YAxis;
-    [Delayed]
-    public float maxFrequency = 60f;        //최대 주파수
+    [Header("모터 기본 성능")]
     [Delayed]
     public float maxRPM = 1800f;             //정격 회전수
     [Delayed]
-    public float accelTime = 1.0f;              //가속시간(0 -> MAX 도달하는 걸리는 시간)
+    public float maxFrequency = 60f;        //최대 주파수    
     [Delayed]
-    public float decelTime = 1.0f;              //감속 시간(MAX -> 0 도달하는데 걸리는 시간)
-
-    [Header("제어 입력(PLC Input)")]
-    public bool STF = false;                    //정회전 신호
-    public bool STR = false;                    //역회전 신호
+    public float accelTime = 1.0f;              //가속시간(0 -> Max까지 도달하는데 걸리는 시간
     [Delayed]
-    public float targetHz = 0.0f;              //지령 주파수(아날로그 입력)
+    public float decelTime = 1.0f;              //감속시간(Max -> 0까지 도달하는데 걸리는 시간
 
-    public UnityEvent<bool> onChangedSTF;
-    public UnityEvent<bool> onChangedSTR;
+    [Header("다단 속도 설정")]
+    public bool useStep = false;
+    public float[] stepFrequencies = new float[8]
+    {
+        0f, 10f, 30f, 0f, 60f, 0f, 0f, 0f
+    };
 
-    [Header("모니터링(Read Only)")]
+    [Header("아날로그 입력 설정")]
+    public bool useAnalogInput = false;
+    public int analogMaxResolution = 4000; //분해능(미쯔비시 : 4000, LS : 16000)
+
+    [Header("상태 모니터링")]
+    [Delayed, Range(0f, 240f), SerializeField]
+    private float _targetHz = 0.0f;                //지령 주파수
+    private int _analogInputValue = 0;          //아날로그 지령
     [SerializeField] float _currentHz = 0.0f;       //현재 주파수
     [SerializeField] float _currentRPM = 0.0f;     //현재 RPM
 
-    public float GetCurrentHZ => _currentHz;
+    private bool _isRun = false;
+    private bool _isOnForward = false;      //정회전
+    private bool _isOnReverse = false;      //역회전
+    private bool _isOnLow = false;          //저속
+    private bool _isOnMiddle = false;       //중속
+    private bool _isOnHigh = false;         //고속
+
+    public UnityEvent<bool> onChangedRun;
+    public UnityEvent<bool> onChangedForward;
+    public UnityEvent<bool> onChangedReverse;
+    public UnityEvent<bool> onChangedRL;
+    public UnityEvent<bool> onChangedRM;
+    public UnityEvent<bool> onChangedRH;
+    public UnityEvent<int> onChangedAnalog;
+    public UnityEvent<float> onChangedTargetHz;
+    public UnityEvent<float> onChangedCurrentHz;
+    public UnityEvent<float> onChangedCurrentRPM;
+
+    #endregion
+
+    #region Property
+    public float GetCurrentHz => _currentHz;
     public float GetCurrentRPM => _currentRPM;
 
+    //모터의 운전 상태 변화(On/Off)에 대한 프로퍼티
+    public bool IsRun
+    {
+        get => _isRun;
+        private set
+        {
+            if (_isRun == value)
+                return;
 
-    public Rigidbody shaft = null;
+            _isRun = value;
+            onChangedRun?.Invoke(value);
+        }
+    }
+    //정방향 회전 상태 변화에 대한 프로퍼티
+    public bool STF
+    {
+        get => _isOnForward;
+        set
+        {
+            if (_isOnForward == value)
+                return;
 
+            if (_isOnForward = value)
+            {
+                onChangedReverse?.Invoke(_isOnReverse = false);
+            }
+
+            onChangedForward?.Invoke(value);
+        }
+    }
+
+    //역방향 회전 상태 변화에 대한 프로퍼티
+    public bool STR
+    {
+        get => _isOnReverse;
+        set
+        {
+            if (_isOnReverse == value)
+                return;
+
+            if (_isOnReverse = value)
+            {
+                onChangedForward?.Invoke(_isOnForward = false);
+            }
+
+            onChangedReverse?.Invoke(value);
+        }
+    }
+    //저속 회전 상태 변화에 대한 프로퍼티
+    public bool RL
+    {
+        get => _isOnLow;
+        set
+        {
+            if (!useStep)
+                return;
+
+            if (_isOnLow == value)
+                return;
+
+            _isOnLow = value;
+            onChangedRL?.Invoke(value);
+        }
+    }
+
+    //중속 회전 상태 변화에 대한 프로퍼티
+    public bool RM
+    {
+        get => _isOnMiddle;
+        set
+        {
+            if (!useStep)
+                return;
+
+            if (useStep && _isOnMiddle == value)
+                return;
+
+            _isOnMiddle = value;
+            onChangedRM?.Invoke(value);
+        }
+    }
+
+    //고속 회전 상태 변화에 대한 프로퍼티
+    public bool RH
+    {
+        get => _isOnHigh;
+        set
+        {
+            if (!useStep)
+                return;
+
+            if (_isOnHigh == value)
+                return;
+
+            _isOnHigh = value;
+            onChangedRH?.Invoke(value);
+        }
+    }
+
+    //아날로그 입력값의 변화에 대한 프로퍼티
+    public int AnalogInput
+    {
+        get => _analogInputValue;
+        set
+        {
+            if (_analogInputValue == value)
+                return;
+
+            if (!useAnalogInput)
+                return;
+
+            _analogInputValue = value;
+            onChangedAnalog?.Invoke(value);
+
+            _targetHz = (float)value / analogMaxResolution * maxFrequency;
+            onChangedTargetHz?.Invoke(_targetHz);
+        }
+    }
+
+    public float CurrentHz
+    {
+        get => Mathf.Abs(_currentHz);
+        private set
+        {
+            _currentHz = value;
+            onChangedCurrentHz?.Invoke(value);
+        }
+    }
+
+    public float CurrentRPM
+    {
+        get => Mathf.Abs(_currentRPM);
+        private set
+        {
+            _currentRPM = value;
+            onChangedCurrentRPM?.Invoke(value);
+        }
+    }
+    #endregion
+
+    #region Private Method
     private void Awake()
     {
-        shaft = GetComponentInChildren<Rigidbody>();
-        shaft.maxAngularVelocity = 1000f;
-        shaft.constraints = RigidbodyConstraints.FreezePosition;
-
-        switch (axis)
+        if (shaft == null)
         {
-            case RotateAxis.XAxis:
-                shaft.constraints |= RigidbodyConstraints.FreezeRotationY | RigidbodyConstraints.FreezeRotationZ;
-                break;
-            case RotateAxis.YAxis:
-                shaft.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
-                break;
-            case RotateAxis.ZAxis:
-                shaft.constraints |= RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationY;
-                break;
-            default:
-                break;
+            shaft = GetComponent<Rigidbody>();
         }
 
-        shaft.useGravity = false;
-        shaft.automaticCenterOfMass = false;
-        shaft.automaticInertiaTensor = false;
-        shaft.inertiaTensorRotation = Quaternion.identity;
-        shaft.inertiaTensor = Vector3.one;
+        if (shaft != null)
+        {
+            shaft.automaticCenterOfMass = false;
+            shaft.automaticInertiaTensor = false;
+            shaft.useGravity = false;
+        }
+
+        if (joint == null)
+        {
+            joint = GetComponent<ConfigurableJoint>();
+        }
+
+        if (joint != null)
+        {
+            joint.xMotion = ConfigurableJointMotion.Locked;
+            joint.yMotion = ConfigurableJointMotion.Locked;
+            joint.zMotion = ConfigurableJointMotion.Locked;
+            joint.angularXMotion = ConfigurableJointMotion.Locked;
+            joint.angularYMotion = ConfigurableJointMotion.Locked;
+            joint.angularZMotion = ConfigurableJointMotion.Free;
+        }
     }
 
     private void FixedUpdate()
     {
-        //타겟 주파수를 알아내기
-        float finalTargetHz = 0.0f;
-
-        if (STF && !STR) finalTargetHz = targetHz;
-        else if (!STF && STR) finalTargetHz = -targetHz;
-        else finalTargetHz = 0f;
-
-        //가감속 로직을 짜야지.
-        float rampRate = maxFrequency / (finalTargetHz != 0 ? accelTime : decelTime);
-        _currentHz = Mathf.MoveTowards(_currentHz, finalTargetHz, rampRate * Time.fixedDeltaTime);
-
-        //Hz -> RPM -> Rad/s 변환
-        //공식:RPM = (120 * Hz) / 극수
-        _currentRPM = (_currentHz / maxFrequency) * maxRPM;
-
-        //RPM을 각속도로 변환 RPM * 0.10472 = rad/s
-        float radPerSec = _currentRPM * 0.10472f;
-
-        //현재 회전해야 하는 축의 방향을 알아내기
-        Vector3 rotationAxis = axis switch
-        {
-            RotateAxis.XAxis => transform.right,
-            RotateAxis.YAxis => transform.up,
-            RotateAxis.ZAxis => transform.forward,
-            _ => Vector3.zero
-        };
-
-        //초당 회전 각도 적용하기.
-        shaft.angularVelocity = rotationAxis * radPerSec;
-        Debug.Log(rotationAxis * radPerSec);
+        float finalTargetHz = GetFinalTargetHz();
+        shaft.angularVelocity = transform.forward * CalculateCurrentSpeed(finalTargetHz);
     }
 
-
-    public bool IsOnSTF
+    private float GetFinalTargetHz()
     {
-        get => STF;
-        set
+        //운전신호가 없으면 정지
+        if (!STF && !STR)
         {
-            if (STF == value)
-                return;
+            IsRun = false;
 
-            if (STF = value)
-            {
-                STR = false;
-                onChangedSTR?.Invoke(STR);
-            }
-
-            onChangedSTF?.Invoke(STF);
+            return 0f;
         }
-    }
 
-    public bool IsOnSTR
-    {
-        get => STR;
-        set
+        IsRun = true;
+        float direction = STF ? 1f : -1f;
+
+        //다단 속도 확인
+        int hzStep = 0;
+        if (RL) hzStep += 1;
+        if (RM) hzStep += 2;
+        if (RH) hzStep += 4;
+
+        if (hzStep > 0)
         {
-            if (STR == value)
-                return;
-
-            if (STR = value)
-            {
-                STF = false;
-                onChangedSTF?.Invoke(STF);
-            }
-
-            onChangedSTR?.Invoke(STR);
+            Debug.Log(hzStep);
+            return direction * stepFrequencies[hzStep];
         }
-    }
 
-    public void ChangeTargetHz(float value)
+        return direction * _targetHz;
+    }
+    private float CalculateCurrentSpeed(float targetHz)
     {
-        if (value < 0f || value > maxFrequency)
+        float rampRate = maxFrequency / (targetHz != 0 ? accelTime : decelTime);
+        CurrentHz = Mathf.MoveTowards(_currentHz, targetHz, rampRate * Time.fixedDeltaTime);
+        CurrentRPM = (_currentHz / maxFrequency) * maxRPM;
+
+        return _currentRPM * 0.10472f;
+    }
+    #endregion
+
+    #region Public Method
+    public void SetTargetHz(float target)
+    {
+        if (useAnalogInput)
             return;
 
-        targetHz = value;
-    }
+        if (_targetHz == target)
+            return;
 
-    public void IncreaseTargetHz(float value)
-    {
-        targetHz = Mathf.Clamp(targetHz + value, 0, maxFrequency);
+        _targetHz = target;
+        onChangedTargetHz?.Invoke(target);
     }
+    public void IncreaseTargetHz(float increase)
+    {
+        if (useAnalogInput)
+            return;
 
-    public void DecreaseTargetHz(float value)
-    {
-        targetHz = Mathf.Clamp(targetHz - value, 0, maxFrequency);
+        _targetHz = Mathf.Clamp(_targetHz + increase, 0f, maxFrequency);
+        onChangedTargetHz?.Invoke(_targetHz);
     }
+    public void DecreaseTargetHz(float decrease)
+    {
+        if (useAnalogInput)
+            return;
 
-    public void PressSTF()
-    {
-        IsOnSTF = !IsOnSTF;
+        _targetHz = Mathf.Clamp(_targetHz - decrease, 0f, maxFrequency);
+        onChangedTargetHz?.Invoke(_targetHz);
     }
-
-    public void PressSTR()
+    public void SetAnalogInputValue(float value)
     {
-        IsOnSTR = !IsOnSTR;
+        AnalogInput = (int)value;
     }
+    #endregion
 }
