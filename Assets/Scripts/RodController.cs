@@ -67,6 +67,29 @@ public class RodController : MonoBehaviour
         IsOnReverse = false;
     }
 
+    //PLC에서는 숫자로 입력해야하므로 0일 때는 false, 0이외의 값은 true
+    public void ChangedForward(short readValue)
+    {
+        IsOnForward = readValue == 0 ? false : true;
+    }
+
+    public void ChangedReverse(short readValue)
+    {
+        IsOnReverse = readValue == 0 ? false : true;
+    }
+
+    private void Start()
+    {
+        if (string.IsNullOrEmpty(forwardAddress) || string.IsNullOrEmpty(reverseAddress))
+        {
+            Debug.LogWarning($"{gameObject.name} : 제발 좀 디바이스 주소 넣어줘");
+            return;
+        }
+
+        MXRequester.Get.AddDeviceAddress(forwardAddress, ChangedForward);
+        MXRequester.Get.AddDeviceAddress(reverseAddress, ChangedReverse);
+    }
+
     private void FixedUpdate()
     {
         //Z축을 기준으로 전진,후퇴방향으로 압력값만큼 밀어낸다.
