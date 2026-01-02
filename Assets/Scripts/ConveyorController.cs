@@ -1,82 +1,162 @@
-using System.Collections.Generic; //<-- List, Dictionary 사용하려면 적어줘야 함.
-using realvirtual;
 using UnityEngine;
+using realvirtual;
+using System.Collections.Generic;
+using UnityEngine.Events;
 
 public class ConveyorController : MonoBehaviour
 {
-    public ConveyorBelt belt;
-    public List<Collider> enterList;
+    #region Variables
+    public ConveyorBelt belt;                   //컨베이어 벨트
+    public LayerMask movableLayer;        //이동가능한 오브젝트 레이어(Nothing 혹은 Everything 이면 검사안함)
+    public string movableTag;                  //이동가능한 오브젝트 태그(비어 있으면 검사 안함)
+    public string movableName;              //이동가능한 오브젝트 이름(비어 있으면 검사 안함)
 
+    public string forwardAddress;
+    public string reverseAddress;
+
+    public float maxSpeed = 10f;       //초당 최대 이동 속도  
+
+    public UnityEvent<bool> onChangedForward;
+    public UnityEvent<bool> onChangedReverse;
+
+    private bool _isOnForward = false;      //정방향 전류 On
+    private bool _isOnReverse = false;      //역방향 전류 On
+
+    private float _targetSpeed = 0f;
+    private float _currentSpeed = 0f;
+
+    private List<Rigidbody> _productList;
+    #endregion
+
+    #region Property
+    //정방향 회전On/Off 프로퍼티
+    public bool IsOnForward
+    {
+        get => _isOnForward;
+        set
+        {
+            if (_isOnForward == value)
+                return;
+
+            if (_isOnForward = value)
+            {
+                _isOnReverse = false;
+                onChangedReverse?.Invoke(_isOnReverse);
+            }
+
+            onChangedForward?.Invoke(_isOnForward);
+            SetMoveDirection(_isOnForward, _isOnReverse);
+        }
+    }
+
+    //역방향 회전 On/Off 프로퍼티
+    public bool IsOnReverse
+    {
+        get => _isOnReverse;
+        set
+        {
+            if (_isOnReverse == value)
+                return;
+
+            if (_isOnReverse = value)
+            {
+                _isOnForward = false;
+                onChangedForward?.Invoke(_isOnForward);
+            }
+
+            onChangedReverse?.Invoke(_isOnReverse);
+            SetMoveDirection(_isOnForward, _isOnReverse);
+        }
+    }
+
+    public void ChangedForward(short readValue)
+    {
+        IsOnForward = readValue == 0 ? false : true;
+    }
+
+    public void ChangedReverse(short readValue)
+    {
+        IsOnReverse = readValue == 0 ? false : true;
+    }
+
+    #endregion
+
+    #region Unity event method
     private void Awake()
     {
-        //_material = GetComponent<MeshRenderer>().material;
+        //트리거된 제품들을 담아 놓을 리스트
+        _productList = new List<Rigidbody>();
 
+        //컨베이어 벨트가 비어 있다면 찾아서 넣어라.
         if (belt == null)
             belt = GetComponent<ConveyorBelt>();
     }
 
-    //트리거 영역에 다른 콜라이더가 들어왔을 때 호출
-    private void OnTriggerEnter(Collider other)
+    private void Start()
     {
-        enterList.Add(other);
-    }
+        if (string.IsNullOrEmpty(forwardAddress) || string.IsNullOrEmpty(reverseAddress))
+        {
+            Debug.LogWarning($"{gameObject.name} : 제발 좀 디바이스 주소 넣어줘");
+            return;
+        }
 
-    //트리거 영역 밖으로 다른 콜라이더가 나갔을 때 호출
-    private void OnTriggerExit(Collider other)
-    {
-        enterList.Remove(other);
+        MXRequester.Get.AddDeviceAddress(forwardAddress, ChangedForward);
+        MXRequester.Get.AddDeviceAddress(reverseAddress, ChangedReverse);
     }
 
     private void FixedUpdate()
     {
-        //벨트의 이동속도 * 지나간 시간 * 이동 방향 => 앞으로 이동할 방향과 거리
-        Vector3 moveDelta = belt.speed * Time.fixedDeltaTime * transform.forward;
-        foreach (Collider col in enterList)
+        _currentSpeed = Mathf.MoveTowards(_currentSpeed, _targetSpeed, maxSpeed * Time.fixedDeltaTime);
+        belt.speed = _currentSpeed;
+        Vector3 moveDelta = _currentSpeed * Time.fixedDeltaTime * transform.forward;
+        foreach (Rigidbody rb in _productList)
         {
-            //현재 위치 + 앞으로 이동할 방향과 거리 => 있어야 할 위치
-            col.attachedRigidbody?.MovePosition(col.attachedRigidbody.position + moveDelta);
+            rb.MovePosition(rb.position + moveDelta);
         }
     }
 
+    private void OnTriggerEnter(Collider other)
+    {
+        if (movableLayer.value != 0 && (movableLayer.value & 1 << other.gameObject.layer) == 0)
+            return;
+
+        if (!string.IsNullOrEmpty(movableTag) && movableTag != other.gameObject.tag)
+            return;
+
+        if (!string.IsNullOrEmpty(movableName) && !other.gameObject.name.Contains(movableName))
+            return;
+
+        if (other.attachedRigidbody != null)
+            _productList.Add(other.attachedRigidbody);
+    }
+
+    private void OnTriggerExit(Collider other)
+    {
+        if (movableLayer.value != 0 && (movableLayer.value & 1 << other.gameObject.layer) == 0)
+            return;
+
+        if (!string.IsNullOrEmpty(movableTag) && movableTag != other.gameObject.tag)
+            return;
+
+        if (!string.IsNullOrEmpty(movableName) && !other.gameObject.name.Contains(movableName))
+            return;
+
+        if (other.attachedRigidbody != null)
+            _productList.Remove(other.attachedRigidbody);
+    }
+    #endregion
 
 
+    private void SetMoveDirection(bool isOnForward, bool isOnReverse)
+    {
+        float speed = 0f;
 
+        if (isOnForward)
+            speed = maxSpeed;
 
-    //public Vector2 direction = Vector2.up;
-    //public float speedPerSec = 1f;
+        else if (isOnReverse)
+            speed += -maxSpeed;
 
-    //private Material _material;
-    //private float _uvOffset;
-
-
-    //private void Update()
-    //{
-    //    _uvOffset += speedPerSec * Time.deltaTime;
-    //    if(_uvOffset > 1f)
-    //    {
-    //        _uvOffset -= 1f;
-    //    }
-
-    //    _material.SetTextureOffset("_BaseMap", direction * _uvOffset);
-    //    _material.SetTextureOffset("_BumpMap", direction * _uvOffset);
-    //}
-
-    //private void FixedUpdate()
-    //{
-    //    Vector3 moveDelta = belt.speed * Time.fixedDeltaTime * transform.forward;
-    //    foreach(var c in enterList)
-    //    {
-    //        c.attachedRigidbody?.MovePosition(c.attachedRigidbody.position + moveDelta);
-    //    }
-    //}
-
-    //private void OnTriggerEnter(Collider other)
-    //{
-    //    enterList.Add(other);
-    //}
-
-    //private void OnTriggerExit(Collider other)
-    //{
-    //    enterList.Remove(other);
-    //}
+        _targetSpeed = speed;
+    }
 }
