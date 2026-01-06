@@ -2,15 +2,16 @@ using UnityEngine;
 using realvirtual;
 using System.Collections.Generic;
 using UnityEngine.Events;
+using System;
 
 [RequireComponent(typeof(ConveyorBelt)), RequireComponent(typeof(BoxCollider))]
 public class ConveyorController : MonoBehaviour
 {
     #region Variables
-    public ConveyorBelt belt;                   //컨베이어 벨트
+    public ConveyorBelt belt;             //컨베이어 벨트
     public LayerMask movableLayer;        //이동가능한 오브젝트 레이어(Nothing 혹은 Everything 이면 검사안함)
-    public string movableTag;                  //이동가능한 오브젝트 태그(비어 있으면 검사 안함)
-    public string movableName;              //이동가능한 오브젝트 이름(비어 있으면 검사 안함)
+    public string movableTag;             //이동가능한 오브젝트 태그(비어 있으면 검사 안함)
+    public string movableName;            //이동가능한 오브젝트 이름(비어 있으면 검사 안함)
 
     public string forwardAddress;
     public string reverseAddress;
@@ -91,30 +92,15 @@ public class ConveyorController : MonoBehaviour
         //컨베이어 벨트가 비어 있다면 찾아서 넣어라.
         if (belt == null)
             belt = GetComponent<ConveyorBelt>();
-
-        BoxCollider box = GetComponent<BoxCollider>();
-        if (box != null)
-        {
-            Vector3 size = box.size;
-            size.x = belt.width;
-            size.y = belt.height;
-            size.z = belt.length;
-            box.size = size;
-            box.center = Vector3.up * 0.03f;
-            box.isTrigger = true;
-        }
     }
 
     private void Start()
     {
-        if (string.IsNullOrEmpty(forwardAddress) || string.IsNullOrEmpty(reverseAddress))
-        {
-            Debug.LogWarning($"{gameObject.name} : 제발 좀 디바이스 주소 넣어줘");
-            return;
-        }
+        if (!string.IsNullOrEmpty(forwardAddress))
+            MXRequester.Get.AddDeviceAddress(forwardAddress, ChangedForward);
 
-        MXRequester.Get.AddDeviceAddress(forwardAddress, ChangedForward);
-        MXRequester.Get.AddDeviceAddress(reverseAddress, ChangedReverse);
+        if (!string.IsNullOrEmpty(reverseAddress))
+            MXRequester.Get.AddDeviceAddress(reverseAddress, ChangedReverse);
     }
 
     private void FixedUpdate()
@@ -177,16 +163,14 @@ public class ConveyorController : MonoBehaviour
     private void OnValidate()
     {
         BoxCollider box = GetComponent<BoxCollider>();
-        if (box != null)
-        {
-            Vector3 size = box.size;
-            size.x = belt.width;
-            size.y = belt.height;
-            size.z = belt.length;
-            box.size = size;
-            box.center = Vector3.up * 0.03f;
-            box.isTrigger = true;
-        }
+        ConveyorBelt belt = GetComponent<ConveyorBelt>();
+        Vector3 size = box.size;
+        size.x = belt.width;
+        size.y = belt.height;
+        size.z = belt.length;
+        box.size = size;
+        box.center = Vector3.up * 0.03f;
+        box.isTrigger = true;
     }
 #endif 
 }
